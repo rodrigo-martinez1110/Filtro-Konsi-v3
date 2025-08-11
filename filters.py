@@ -1,0 +1,311 @@
+# filters.py
+"""
+Contém toda a lógica de filtragem.
+"""
+
+import pandas as pd
+from datetime import datetime
+from config import ORDEM_COLUNAS_FINAL, MAPEAMENTO_COLUNAS_FINAL
+import re
+
+# Função Auxiliar de Margem de Segurança
+def _aplicar_margem_seguranca(margem_disponivel_series: pd.Series, config: dict) -> pd.Series:
+    """
+    Aplica a margem de segurança a uma Série de margens com base na configuração.
+    Retorna a Série com as margens ajustadas.
+    """
+    if not config.get("usa_margem_seguranca"):
+        return margem_disponivel_series
+
+    modo = config.get("modo_margem_seguranca")
+    valor = config.get("valor_margem_seguranca", 0)
+
+    if modo == "Percentual (%)":
+        fator = 1 - (valor / 100)
+        return margem_disponivel_series * fator
+    
+    elif modo == "Valor Fixo (R$)":
+        margem_ajustada = margem_disponivel_series - valor
+        return margem_ajustada.clip(lower=0)
+    
+    return margem_disponivel_series
+
+# Função Auxiliar de Máscara Condicional (VERSÃO ÚNICA E CORRETA)
+def _criar_mascara_condicional(base, config, coluna_tratado):
+    """Função utilitária para criar a máscara de filtro de forma padronizada."""
+    coluna_condicional = config.get('coluna_condicional')
+    valor_condicional = config.get('valor_condicional')
+    modo_condicional = config.get('modo_condicional')
+
+    mascara = ~base[coluna_tratado]
+
+    if coluna_condicional != "Aplicar a toda a base":
+        if coluna_condicional in base.columns and base[coluna_condicional].notna().any() and valor_condicional:
+            if modo_condicional == "Usar palavras-chave":
+                palavras_chave = [item.strip() for item in str(valor_condicional).split(";") if item.strip()]
+                if palavras_chave:
+                    regex_pattern = "|".join(map(re.escape, palavras_chave))
+                    mascara &= base[coluna_condicional].str.contains(regex_pattern, na=False, case=False)
+            else:
+                mascara &= (base[coluna_condicional] == valor_condicional)
+    return mascara
+
+
+def _preprocessar_base(df: pd.DataFrame, params: dict) -> pd.DataFrame:
+    """Aplica filtros e limpezas comuns a todas as campanhas."""
+    base = df.copy()
+
+    if 'Nome_Cliente' in base.columns:
+        base['Nome_Cliente'] = base['Nome_Cliente'].str.title()
+    if 'CPF' in base.columns:
+        base['CPF'] = base['CPF'].str.replace(r"[.\-]", "", regex=True)
+
+    if params.get('selecao_lotacao'):
+        base = base[~base['Lotacao'].isin(params['selecao_lotacao'])]
+    if params.get('selecao_vinculos'):
+        base = base[~base['Vinculo_Servidor'].isin(params['selecao_vinculos'])]
+
+    if 'Data_Nascimento' in base.columns and not base['Data_Nascimento'].isna().all():
+        data_limite_idade = params.get('data_limite_idade')
+        if data_limite_idade:
+            base = base[pd.to_datetime(base["Data_Nascimento"], dayfirst=True, errors='coerce').dt.date >= data_limite_idade]
+        
+    return base
+
+
+def _calcular_novo(base: pd.DataFrame, params: dict, configs_banco: list) -> pd.DataFrame:
+    """Lógica de cálculo específica para a campanha 'Novo'."""
+    convenio = params['convenio']
+    if convenio == 'govsp':
+        negativos = base.loc[base['MG_Emprestimo_Disponivel'] < 0, 'Matricula']
+        base = base.loc[~base['Matricula'].isin(negativos)]
+    elif convenio == 'govmt':
+        base = base.loc[base['MG_Compulsoria_Disponivel'] >= 0]
+    base['tratado'] = False
+    for config in configs_banco:
+        mask = _criar_mascara_condicional(base, config, 'tratado')
+        margem_disponivel = base.loc[mask, 'MG_Emprestimo_Disponivel']
+        margem_ajustada = _aplicar_margem_seguranca(margem_disponivel, config)
+        base.loc[mask, 'valor_liberado_emprestimo'] = (margem_ajustada * config.get('coeficiente', 0)).round(2)
+        base.loc[mask, 'valor_parcela_emprestimo'] = margem_ajustada.round(2)
+        base.loc[mask, 'comissao_emprestimo'] = (base.loc[mask, 'valor_liberado_emprestimo'] * (config.get('comissao', 0) / 100)).round(2)
+        base.loc[mask, 'banco_emprestimo'] = config.get('banco')
+        base.loc[mask, 'prazo_emprestimo'] = config.get('parcelas')
+        base.loc[mask, 'tratado'] = True
+
+    base = base.loc[base['MG_Emprestimo_Disponivel'] > params.get('margem_limite', 0)]
+    if 'comissao_emprestimo' in base.columns:
+        base = base.loc[base['comissao_emprestimo'] >= params.get('comissao_minima', 0)]
+    return base
+
+def _calcular_beneficio(base: pd.DataFrame, params: dict, configs_banco: list) -> pd.DataFrame:
+    """Lógica de cálculo específica para a campanha 'Benefício'."""
+    # (Código da resposta anterior, já corrigido)
+    convenio = params['convenio']
+    usou_beneficio = pd.Series(dtype='object')
+    if convenio == 'govsp':
+        base['margem_beneficio_usado'] = base['MG_Beneficio_Saque_Total'] - base['MG_Beneficio_Saque_Disponivel']
+        usou_beneficio = base.loc[base['margem_beneficio_usado'] > 0]
+        base = base.loc[base['MG_Beneficio_Saque_Disponivel'] == base['MG_Beneficio_Saque_Total']]
+        base = base[base['Lotacao'] != "ALESP"]
+    conv_excluidos = ['prefrj', 'govpi', 'goval', 'govce']
+    if convenio not in conv_excluidos:
+        base = base.loc[base['MG_Beneficio_Saque_Disponivel'] == base['MG_Beneficio_Saque_Total']]
+    base = base.sort_values(by='MG_Beneficio_Saque_Disponivel', ascending=False)
+    base['tratado'] = False
+    for config in configs_banco:
+        coeficiente = config.get('coeficiente', 0)
+        coeficiente2 = config.get('coeficiente2')
+        mask = _criar_mascara_condicional(base, config, 'tratado')
+        if convenio == 'goval':
+            condicao_adicional = (base['MG_Beneficio_Saque_Disponivel'] == base['MG_Beneficio_Saque_Total']) & (base['MG_Beneficio_Compra_Disponivel'] == base['MG_Beneficio_Compra_Total'])
+            margem_a_ser_usada = base['MG_Beneficio_Saque_Disponivel'].copy()
+            coeficiente_a_ser_usado = pd.Series(coeficiente2, index=base.index)
+            margem_a_ser_usada.loc[condicao_adicional] += base.loc[condicao_adicional, 'MG_Beneficio_Compra_Disponivel']
+            coeficiente_a_ser_usado.loc[condicao_adicional] = coeficiente
+            margem_ajustada = _aplicar_margem_seguranca(margem_a_ser_usada[mask], config)
+            base.loc[mask, "valor_liberado_beneficio"] = (margem_ajustada * coeficiente_a_ser_usado[mask]).round(2)
+        elif convenio == 'govam':
+            usar_margem_compra = config.get('usar_margem_compra', False)
+            if usar_margem_compra:
+                mask_govam = mask & (base['MG_Beneficio_Compra_Total'] == base['MG_Beneficio_Compra_Disponivel']) & (base['MG_Beneficio_Saque_Total'] == base['MG_Beneficio_Saque_Disponivel'])
+                margem_disponivel = base.loc[mask_govam, 'MG_Beneficio_Compra_Disponivel']
+                margem_ajustada = _aplicar_margem_seguranca(margem_disponivel, config)
+                base.loc[mask_govam, 'valor_liberado_beneficio'] = (margem_ajustada * coeficiente).round(2)
+            else:
+                mask_govam = mask & (base['MG_Beneficio_Compra_Total'] != base['MG_Beneficio_Compra_Disponivel']) & (base['MG_Beneficio_Saque_Total'] == base['MG_Beneficio_Saque_Disponivel'])
+                margem_disponivel = base.loc[mask_govam, 'MG_Beneficio_Saque_Disponivel']
+                margem_ajustada = _aplicar_margem_seguranca(margem_disponivel, config)
+                base.loc[mask_govam, 'valor_liberado_beneficio'] = (margem_ajustada * coeficiente).round(2)
+        elif convenio == 'govsp':
+            margem_disponivel = base.loc[mask, 'MG_Beneficio_Saque_Disponivel']
+            margem_ajustada = _aplicar_margem_seguranca(margem_disponivel, config)
+            base.loc[mask, 'valor_liberado_beneficio'] = (margem_ajustada * coeficiente).round(2)
+            if not usou_beneficio.empty:
+                base.loc[base['Matricula'].isin(usou_beneficio['Matricula']), 'valor_liberado_beneficio'] = 0
+        else:
+            margem_disponivel = base.loc[mask, 'MG_Beneficio_Saque_Disponivel']
+            margem_ajustada = _aplicar_margem_seguranca(margem_disponivel, config)
+            base.loc[mask, 'valor_liberado_beneficio'] = (margem_ajustada * coeficiente).round(2)
+        base.loc[mask, 'valor_parcela_beneficio'] = (base.loc[mask, 'valor_liberado_beneficio'] / config.get('coeficiente_parcela', 1.0)).round(2)
+        base.loc[mask, 'comissao_beneficio'] = (base.loc[mask, 'valor_liberado_beneficio'] * (config.get('comissao', 0) / 100)).round(2)
+        base.loc[mask, 'banco_beneficio'] = config.get('banco')
+        base.loc[mask, 'prazo_beneficio'] = config.get('parcelas')
+        base.loc[mask, 'tratado'] = True
+    base = base.loc[base['MG_Emprestimo_Disponivel'] < params.get('margem_limite', 999999)]
+    if 'comissao_beneficio' in base.columns:
+        base = base.loc[base['comissao_beneficio'] >= params.get('comissao_minima', 0)]
+    return base
+
+def _calcular_cartao(base: pd.DataFrame, params: dict, configs_banco: list) -> pd.DataFrame:
+    # (Código da resposta anterior, já corrigido)
+    convenio = params['convenio']
+    usou_cartao = pd.Series(dtype='object')
+    base = base.loc[base['MG_Cartao_Disponivel'] == base['MG_Cartao_Total']]
+    if convenio == 'govsp':
+        base = base[base['Lotacao'] != "ALESP"]
+        base['margem_cartao_usado'] = base['MG_Cartao_Total'] - base['MG_Cartao_Disponivel']
+        usou_cartao = base.loc[base['margem_cartao_usado'] > 0]
+    base['tratado'] = False
+    for config in configs_banco:
+        mask = _criar_mascara_condicional(base, config, 'tratado')
+        margem_disponivel = base.loc[mask, 'MG_Cartao_Disponivel']
+        margem_ajustada = _aplicar_margem_seguranca(margem_disponivel, config)
+        base.loc[mask, 'valor_liberado_cartao'] = (margem_ajustada * config.get('coeficiente', 0)).round(2)
+        if convenio == 'govsp' and not usou_cartao.empty:
+            base.loc[base['Matricula'].isin(usou_cartao['Matricula']), 'valor_liberado_cartao'] = 0
+        base.loc[mask, 'valor_parcela_cartao'] = (base.loc[mask, 'valor_liberado_cartao'] / config.get('coeficiente_parcela', 1.0)).round(2)
+        base.loc[mask, 'comissao_cartao'] = (base.loc[mask, 'valor_liberado_cartao'] * (config.get('comissao', 0) / 100)).round(2)
+        base.loc[mask, 'banco_cartao'] = config.get('banco')
+        base.loc[mask, 'prazo_cartao'] = config.get('parcelas')
+        base.loc[mask, 'tratado'] = True
+    base = base.loc[base['MG_Emprestimo_Disponivel'] < params.get('margem_limite', 999999)]
+    if 'comissao_cartao' in base.columns:
+        base = base.loc[base['comissao_cartao'] >= params.get('comissao_minima', 0)]
+    return base
+
+def _calcular_beneficio_e_cartao(base: pd.DataFrame, params: dict, configs_banco: list) -> pd.DataFrame:
+    # (Código da resposta anterior, já corrigido)
+    convenio = params['convenio']
+    base['valor_liberado_beneficio'] = 0.0
+    base['valor_liberado_cartao'] = 0.0
+    base['comissao_beneficio'] = 0.0
+    base['comissao_cartao'] = 0.0
+    base['valor_parcela_beneficio'] = 0.0
+    base['valor_parcela_cartao'] = 0.0
+    base['banco_beneficio'] = ''
+    base['banco_cartao'] = ''
+    base['prazo_beneficio'] = 0
+    base['prazo_cartao'] = 0
+    base['tratado_beneficio'] = False
+    base['tratado_cartao'] = False
+    usou_beneficio, usou_cartao = pd.Series(dtype='object'), pd.Series(dtype='object')
+    if convenio == 'govsp':
+        usou_beneficio = base[base['MG_Beneficio_Saque_Total'] > base['MG_Beneficio_Saque_Disponivel']]
+        usou_cartao = base[base['MG_Cartao_Total'] > base['MG_Cartao_Disponivel']]
+    for config in configs_banco:
+        produto = config.get('cartao_escolhido')
+        if produto == 'Benefício':
+            mask = _criar_mascara_condicional(base, config, 'tratado_beneficio')
+            margem_disponivel = base.loc[mask, 'MG_Beneficio_Saque_Disponivel']
+            margem_ajustada = _aplicar_margem_seguranca(margem_disponivel, config)
+            base.loc[mask, 'valor_liberado_beneficio'] = (margem_ajustada * config.get('coeficiente', 0)).round(2)
+            if convenio == 'govsp' and not usou_beneficio.empty:
+                base.loc[(base['valor_liberado_beneficio'] != 0) &
+                                    (base['Matricula'].isin(usou_beneficio['Matricula'])),
+                                    'valor_liberado_beneficio'] = 0
+            base.loc[mask, 'valor_parcela_beneficio'] = (base.loc[mask, 'valor_liberado_beneficio'] / config.get('coeficiente_parcela', 1.0)).round(2)
+            base.loc[mask, 'comissao_beneficio'] = (base.loc[mask, 'valor_liberado_beneficio'] * (config.get('comissao', 0) / 100)).round(2)
+            base.loc[mask, 'banco_beneficio'] = config.get('banco')
+            base.loc[mask, 'prazo_beneficio'] = config.get('parcelas')
+            base.loc[mask, 'tratado_beneficio'] = True
+
+            
+
+        elif produto == 'Consignado':
+            mask = _criar_mascara_condicional(base, config, 'tratado_cartao')
+            margem_disponivel = base.loc[mask, 'MG_Cartao_Disponivel']
+            margem_ajustada = _aplicar_margem_seguranca(margem_disponivel, config)
+            filtro_margem_minima = margem_ajustada >= config.get('margem_minima_cartao', 0)
+            base.loc[mask & filtro_margem_minima, 'valor_liberado_cartao'] = (margem_ajustada[filtro_margem_minima] * config.get('coeficiente', 0)).round(2)
+            if convenio == 'govsp' and not usou_cartao.empty:
+                base.loc[(base['valor_liberado_cartao'] != 0) &
+                                    (base['Matricula'].isin(usou_cartao['Matricula'])),
+                                    'valor_liberado_cartao'] = 0
+            base.loc[mask, 'valor_parcela_cartao'] = (base.loc[mask, 'valor_liberado_cartao'] / config.get('coeficiente_parcela', 1.0)).round(2)
+            base.loc[mask, 'comissao_cartao'] = (base.loc[mask, 'valor_liberado_cartao'] * (config.get('comissao', 0) / 100)).round(2)
+            base.loc[mask, 'banco_cartao'] = config.get('banco')
+            base.loc[mask, 'prazo_cartao'] = config.get('parcelas')
+            base.loc[mask, 'tratado_cartao'] = True
+            
+
+    base = base.loc[base['MG_Emprestimo_Disponivel'] < params.get('margem_limite', 999999)]
+    
+    base['comissao_total'] = (base['comissao_beneficio'] + base['comissao_cartao']).round(2)
+    
+    base = base[base['comissao_total'] >= params.get('comissao_minima', 0)]
+    return base
+
+def _finalizar_base(df: pd.DataFrame, params: dict) -> pd.DataFrame:
+    """Aplica formatação final, adiciona colunas, nome de campanha e limpa o DF."""
+    base = df.copy()
+    for col in ORDEM_COLUNAS_FINAL:
+        if col not in base.columns:
+            base[col] = ""
+    # Garante que a coluna 'CPF' exista antes de tentar usá-la
+    if 'CPF' in base.columns:
+         base = base.drop_duplicates(subset=['CPF'])
+    
+    colunas_presentes = [col for col in ORDEM_COLUNAS_FINAL if col in base.columns]
+    base = base[colunas_presentes]
+    base.rename(columns=MAPEAMENTO_COLUNAS_FINAL, inplace=True)
+    
+    data_hoje = datetime.today().strftime('%d%m%Y')
+    campanha_map = {'Novo': 'novo', 'Benefício': 'benef', 'Cartão': 'cartao', 'Benefício & Cartão': 'benef-cartao'}
+    tipo_campanha_str = campanha_map.get(params['tipo_campanha'], 'campanha')
+    convenio = params.get('convenio', 'geral')
+    equipe = params.get('equipes', 'geral')
+    
+    base['Campanha'] = f"{convenio}_{data_hoje}_{tipo_campanha_str}_{equipe}"
+    
+    convai_percent = params.get('convai_percent', 0)
+    if convai_percent > 0 and len(base) > 0:
+        n_convai = int((convai_percent / 100) * len(base))
+        if n_convai > 0:
+            indices_convai = base.sample(n=n_convai, random_state=42).index
+            base.loc[indices_convai, 'Campanha'] = f"{convenio}_{data_hoje}_{tipo_campanha_str}_convai"
+            
+    colunas_para_remover = ['tratado', 'tratado_beneficio', 'tratado_cartao', 'comissao_total']
+    base.drop(columns=[col for col in colunas_para_remover if col in base.columns], inplace=True, errors='ignore')
+            
+    return base
+
+def aplicar_filtros(df: pd.DataFrame, params: dict, configs_banco: list) -> pd.DataFrame:
+    """
+    Função principal que orquestra todo o processo de filtragem.
+    """
+    base_pre_processada = _preprocessar_base(df, params)
+    
+    base_calculada = pd.DataFrame()
+    tipo_campanha = params.get('tipo_campanha')
+
+    if tipo_campanha == 'Novo':
+        base_calculada = _calcular_novo(base_pre_processada, params, configs_banco)
+        base_calculada = base_calculada.sort_values(by='valor_liberado_emprestimo', ascending=False)
+    elif tipo_campanha == 'Cartão':
+        base_calculada = _calcular_cartao(base_pre_processada, params, configs_banco)
+        base_calculada = base_calculada.sort_values(by='valor_liberado_cartao', ascending=False)
+    elif tipo_campanha == 'Benefício':
+        base_calculada = _calcular_beneficio(base_pre_processada, params, configs_banco)
+        base_calculada = base_calculada.sort_values(by='valor_liberado_beneficio', ascending=False)
+    elif tipo_campanha == 'Benefício & Cartão':
+        base_calculada = _calcular_beneficio_e_cartao(base_pre_processada, params, configs_banco)
+        base_calculada = base_calculada.sort_values(by='comissao_total', ascending=False)
+
+    if base_calculada.empty:
+        return pd.DataFrame()
+
+    # A remoção de duplicatas foi movida para a função _finalizar_base
+    base_final = _finalizar_base(base_calculada, params)
+    
+    return base_final
