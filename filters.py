@@ -309,3 +309,81 @@ def aplicar_filtros(df: pd.DataFrame, params: dict, configs_banco: list) -> pd.D
     base_final = _finalizar_base(base_calculada, params)
     
     return base_final
+
+#============================================================================
+# Filtro Master
+
+def _encontrar_melhor_item(linha_simulacoes):
+    """
+    Percorre as simulações de uma linha e retorna a que tiver o maior número de parcelas.
+    """
+    maior_parcela = 0
+    melhor_item = None
+    for item in linha_simulacoes:
+        if pd.notna(item):
+            match = re.search(r'(\d+)x:', str(item))
+            if match:
+                parcela = int(match.group(1))
+                if parcela > maior_parcela:
+                    maior_parcela = parcela
+                    melhor_item = item
+    return melhor_item
+
+def aplicar_filtro_simulacoes(df: pd.DataFrame, params: dict) -> pd.DataFrame:
+    """
+    Processa um DataFrame que contém uma coluna 'Simulacoes' para extrair a melhor oferta.
+    """
+    base = df.copy()
+
+    # 1. Extração da melhor simulação
+    if 'Simulacoes' not in base.columns:
+        st.error("Erro fatal: A coluna 'Simulacoes' não foi encontrada nos arquivos carregados.")
+        return pd.DataFrame()
+
+    colunas_separadas = base['Simulacoes'].fillna('').astype(str).str.split('|', expand=True)
+    base['Melhor_Item'] = colunas_separadas.apply(_encontrar_melhor_item, axis=1)
+    
+    extracoes = base['Melhor_Item'].str.extract(r'(?P<prazo>\d+)x: (?P<valor>[\d.,]+) \(parcela: (?P<parcela>[\d.,]+)\)', expand=True)
+    
+    if extracoes.empty:
+        st.warning("Não foi possível extrair dados do formato esperado na coluna 'Melhor_Item'.")
+        return pd.DataFrame()
+
+    # 2. Limpeza e conversão de dados
+    base['prazo_beneficio'] = pd.to_numeric(extracoes['prazo'], errors='coerce')
+    
+    # Lógica robusta para converter números no formato brasileiro ou americano
+    for col_name in ['valor', 'parcela']:
+        col_series = extracoes[col_name].copy().astype(str)
+        col_series = col_series.str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        extracoes[col_name] = pd.to_numeric(col_series, errors='coerce')
+
+    base['valor_liberado_beneficio'] = extracoes['valor']
+    base['valor_parcela_beneficio'] = extracoes['parcela']
+    
+    if 'CPF' in base.columns:
+        base['CPF'] = base['CPF'].str.replace(r'\D', '', regex=True)
+    if 'Nome_Cliente' in base.columns:
+        base['Nome_Cliente'] = base['Nome_Cliente'].str.title()
+
+    # 3. Aplicação dos filtros e parâmetros
+    base = base.loc[base['valor_liberado_beneficio'].fillna(0) > 0]
+    if 'MG_Beneficio_Saque_Disponivel' in base.columns:
+         base = base.loc[pd.to_numeric(base['MG_Beneficio_Saque_Disponivel'].fillna(0), errors='coerce') >= 0]
+
+    if params['filtrar_saldo_devedor'] and "Saldo_Devedor" in base.columns:
+        base["Saldo_Devedor"] = pd.to_numeric(base["Saldo_Devedor"], errors="coerce").fillna(0)
+        base = base.loc[base["Saldo_Devedor"] > 0]
+
+    # 4. Cálculo de comissão e nome da campanha
+    base['comissao_beneficio'] = (base['valor_liberado_beneficio'].fillna(0) * params['comissao_banco']).round(2)
+    base = base.query('comissao_beneficio >= @params["comissao_minima"]')
+    
+    base['banco_beneficio'] = '243' # Banco Master fixo, como no script original
+    data_hoje = datetime.today().strftime('%d%m%Y')
+    convenio_str = base['Convenio'].str.lower().fillna('geral') if 'Convenio' in base.columns else 'geral'
+    base['Campanha'] = convenio_str + '_' + data_hoje + '_benef_' + params['equipe']
+
+    # 5. Finalização do DataFrame
+    base_final = _finalizar_base(base, params) # Reutiliza nossa função de finalização!
+    return base_final
