@@ -174,3 +174,24 @@ def exibir_configuracoes_banco(tipo_campanha: str, convenio: str, df: pd.DataFra
             configuracoes_banco.append(config)
             
     return configuracoes_banco
+
+# ======================================================================
+# Filtro Master
+def exibir_sidebar_simulacoes():
+    """Cria a barra lateral com os parâmetros para o filtro de simulações."""
+    st.sidebar.header("⚙️ Parâmetros de Saída")
+    
+    with st.sidebar.expander("Definir Parâmetros", expanded=True):
+        equipes_konsi = ['outbound', 'csapp', 'csport', 'cscdx', 'csativacao', 'cscp']
+        equipe = st.selectbox("Selecione a Equipe", equipes_konsi, key="equipe_simulacao")
+        comissao_banco = st.number_input("Comissão do banco (%)", value=10.0, step=0.5, min_value=0.0) / 100
+        comissao_minima = st.number_input("Comissão mínima (R$)", value=50.0, step=10.0, min_value=0.0)
+
+    filtrar_saldo_devedor = st.sidebar.checkbox("Apenas com saldo devedor > 0", value=False)
+
+    return {
+        "equipe": equipe,
+        "comissao_banco": comissao_banco,
+        "comissao_minima": comissao_minima,
+        "filtrar_saldo_devedor": filtrar_saldo_devedor
+    }
