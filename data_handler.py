@@ -98,3 +98,37 @@ def buscar_restricoes(_supabase_client: Client, convenio: str, produto: str) -> 
 def converter_df_para_csv(df: pd.DataFrame) -> bytes:
     """Converte um DataFrame para CSV em formato UTF-8, pronto para download."""
     return df.to_csv(index=False, sep=';').encode('utf-8')
+
+
+# ===========================================================================
+# Filtro Master - 
+
+import io
+
+@st.cache_data
+def carregar_arquivos_simulacoes(files: List[st.runtime.uploaded_file_manager.UploadedFile]) -> pd.DataFrame:
+    """Carrega arquivos de simulação, detectando o separador e usando codificação latin1."""
+    if not files:
+        return pd.DataFrame()
+
+    lista_dfs = []
+    for file in files:
+        try:
+            file.seek(0)
+            content_bytes = file.read()
+            
+            # Detecta o separador (vírgula ou ponto e vírgula)
+            primeira_linha = content_bytes.splitlines()[0].decode('latin1')
+            sep = ';' if primeira_linha.count(';') > primeira_linha.count(',') else ','
+            
+            file_buffer = io.BytesIO(content_bytes)
+            df = pd.read_csv(file_buffer, sep=sep, encoding='latin1', low_memory=False, dtype=str)
+            lista_dfs.append(df)
+        except Exception as e:
+            st.error(f"Não foi possível ler o arquivo {file.name}. Erro: {e}")
+            continue
+    
+    if not lista_dfs:
+        return pd.DataFrame()
+
+    return pd.concat(lista_dfs, ignore_index=True)
