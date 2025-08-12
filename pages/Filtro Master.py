@@ -1,6 +1,7 @@
 # pages/2_Filtro_Simulacoes.py
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 
 # Importa as funções necessárias dos nossos módulos
 from data_handler import carregar_arquivos_simulacoes, converter_df_para_csv

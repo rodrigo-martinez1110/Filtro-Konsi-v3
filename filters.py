@@ -1,3 +1,5 @@
+import streamlit as st
+
 # filters.py
 """
 Contém toda a lógica de filtragem.
