@@ -335,9 +335,9 @@ def aplicar_filtro_simulacoes(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     """
     Processa um DataFrame que contém uma coluna 'Simulacoes' para extrair a melhor oferta.
     """
-    base = df.copy()
+    base = df.copy() # Usar .copy() ajuda a evitar SettingWithCopyWarning
 
-    # 1. Extração da melhor simulação
+    # ... (a lógica de extração da simulação permanece a mesma)
     if 'Simulacoes' not in base.columns:
         st.error("Erro fatal: A coluna 'Simulacoes' não foi encontrada nos arquivos carregados.")
         return pd.DataFrame()
@@ -351,10 +351,8 @@ def aplicar_filtro_simulacoes(df: pd.DataFrame, params: dict) -> pd.DataFrame:
         st.warning("Não foi possível extrair dados do formato esperado na coluna 'Melhor_Item'.")
         return pd.DataFrame()
 
-    # 2. Limpeza e conversão de dados
     base['prazo_beneficio'] = pd.to_numeric(extracoes['prazo'], errors='coerce')
     
-    # Lógica robusta para converter números no formato brasileiro ou americano
     for col_name in ['valor', 'parcela']:
         col_series = extracoes[col_name].copy().astype(str)
         col_series = col_series.str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
@@ -364,28 +362,25 @@ def aplicar_filtro_simulacoes(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     base['valor_parcela_beneficio'] = extracoes['parcela']
     
     if 'CPF' in base.columns:
-        base['CPF'] = base['CPF'].str.replace(r'\D', '', regex=True)
+        base.loc[:, 'CPF'] = base['CPF'].str.replace(r'\D', '', regex=True)
     if 'Nome_Cliente' in base.columns:
-        base['Nome_Cliente'] = base['Nome_Cliente'].str.title()
+        base.loc[:, 'Nome_Cliente'] = base['Nome_Cliente'].str.title()
 
-    # 3. Aplicação dos filtros e parâmetros
     base = base.loc[base['valor_liberado_beneficio'].fillna(0) > 0]
     if 'MG_Beneficio_Saque_Disponivel' in base.columns:
          base = base.loc[pd.to_numeric(base['MG_Beneficio_Saque_Disponivel'].fillna(0), errors='coerce') >= 0]
 
     if params['filtrar_saldo_devedor'] and "Saldo_Devedor" in base.columns:
-        base["Saldo_Devedor"] = pd.to_numeric(base["Saldo_Devedor"], errors="coerce").fillna(0)
+        base.loc[:, "Saldo_Devedor"] = pd.to_numeric(base["Saldo_Devedor"], errors="coerce").fillna(0)
         base = base.loc[base["Saldo_Devedor"] > 0]
 
-    # 4. Cálculo de comissão e nome da campanha
-    base['comissao_beneficio'] = (base['valor_liberado_beneficio'].fillna(0) * params['comissao_banco']).round(2)
+    base.loc[:, 'comissao_beneficio'] = (base['valor_liberado_beneficio'].fillna(0) * params['comissao_banco']).round(2)
     base = base.query('comissao_beneficio >= @params["comissao_minima"]')
     
-    base['banco_beneficio'] = '243' # Banco Master fixo, como no script original
-    data_hoje = datetime.today().strftime('%d%m%Y')
-    convenio_str = base['Convenio'].str.lower().fillna('geral') if 'Convenio' in base.columns else 'geral'
-    base['Campanha'] = convenio_str + '_' + data_hoje + '_benef_' + params['equipe']
+    base.loc[:, 'banco_beneficio'] = '243'
+    
+    params['tipo_campanha'] = 'Benefício' 
 
     # 5. Finalização do DataFrame
-    base_final = _finalizar_base(base, params) # Reutiliza nossa função de finalização!
+    base_final = _finalizar_base(base, params) # Agora a função recebe o que espera
     return base_final
