@@ -364,7 +364,10 @@ def aplicar_filtro_simulacoes(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     if 'CPF' in base.columns:
         base.loc[:, 'CPF'] = base['CPF'].str.replace(r'\D', '', regex=True)
     if 'Nome_Cliente' in base.columns:
-        base.loc[:, 'Nome_Cliente'] = base['Nome_Cliente'].str.title()
+        if 'Nome_Cliente' in base.columns:
+            base['Nome_Cliente'] = base['Nome_Cliente'].apply(
+                lambda x: x.title() if isinstance(x, str) else x
+            )
 
     base = base.loc[base['valor_liberado_beneficio'].fillna(0) > 0]
     if 'MG_Beneficio_Saque_Disponivel' in base.columns:
