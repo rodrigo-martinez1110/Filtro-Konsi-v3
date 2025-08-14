@@ -58,7 +58,9 @@ def _preprocessar_base(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     base = df.copy()
 
     if 'Nome_Cliente' in base.columns:
-        base['Nome_Cliente'] = base['Nome_Cliente'].str.title()
+        base['Nome_Cliente'] = base['Nome_Cliente'].apply(
+            lambda x: x.title() if isinstance(x, str) else x
+        )
     if 'CPF' in base.columns:
         base['CPF'] = base['CPF'].str.replace(r"[.\-]", "", regex=True)
 
