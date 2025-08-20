@@ -357,7 +357,7 @@ def aplicar_filtro_simulacoes(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     
     for col_name in ['valor', 'parcela']:
         col_series = extracoes[col_name].copy().astype(str)
-        col_series = col_series.str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        col_series = col_series.str.replace(',', '.', regex=False)
         extracoes[col_name] = pd.to_numeric(col_series, errors='coerce')
 
     base['valor_liberado_beneficio'] = extracoes['valor']
