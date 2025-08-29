@@ -78,6 +78,20 @@ if 'df_bruto' in st.session_state and not st.session_state.df_bruto.empty:
                 base_filtrada = aplicar_filtros(df_bruto, params_gerais, configs_banco)
 
                 if not base_filtrada.empty:
+                    # --- INÍCIO DOS LOGS DE VALIDAÇÃO ---
+                    with st.expander("🔬 Parâmetros de Validação Utilizados no Filtro"):
+                        st.subheader("Parâmetros Gerais")
+                        st.json(params_gerais)
+
+                        st.subheader("Restrições Carregadas do Supabase")
+                        if restricoes_db:
+                            st.json(restricoes_db)
+                        else:
+                            st.info("Nenhuma restrição encontrada ou carregada do Supabase.")
+                        
+                        st.subheader("Configurações de Banco e Produto")
+                        st.json(configs_banco)
+                    # --- FIM DOS LOGS DE VALIDAÇÃO ---
                     st.success("Filtros aplicados com sucesso!")
                     st.metric("Registros na campanha final:", f"{len(base_filtrada)} clientes")
                     st.dataframe(base_filtrada.head())
