@@ -342,8 +342,10 @@ def aplicar_filtros(df: pd.DataFrame, params: dict, configs_banco: list) -> pd.D
     return base_final
 
 #============================================================================
-# Filtro Master
 
+# ----------------------------
+# Filtro Master
+# ----------------------------
 def _encontrar_melhor_item(linha_simulacoes):
     """
     Percorre as simulações de uma linha e retorna a que tiver o maior número de parcelas.
@@ -360,6 +362,19 @@ def _encontrar_melhor_item(linha_simulacoes):
                     melhor_item = item
     return melhor_item
 
+
+# ----------------------------
+# Função auxiliar
+# ----------------------------
+def normalizar_numero(valor: str) -> float:
+    """
+    Converte strings numéricas em float, tratando formatos BR (16.000,50) e US (4880.46).
+    """
+    if ',' in valor:
+        # Formato brasileiro: remove separador de milhar e troca vírgula por ponto
+        valor = valor.replace('.', '').replace(',', '.')
+    return pd.to_numeric(valor, errors='coerce')
+
 def aplicar_filtro_simulacoes(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     """
     Processa um DataFrame que contém uma coluna 'Simulacoes' para extrair a melhor oferta.
@@ -370,26 +385,31 @@ def aplicar_filtro_simulacoes(df: pd.DataFrame, params: dict) -> pd.DataFrame:
         st.error("Erro fatal: A coluna 'Simulacoes' não foi encontrada nos arquivos carregados.")
         return pd.DataFrame()
 
+    # Divide as simulações em colunas separadas
     colunas_separadas = base['Simulacoes'].fillna('').astype(str).str.split('|', expand=True)
     base['Melhor_Item'] = colunas_separadas.apply(_encontrar_melhor_item, axis=1)
-    
-    extracoes = base['Melhor_Item'].str.extract(r'(?P<prazo>\d+)x: (?P<valor>[\d.,]+) \(parcela: (?P<parcela>[\d.,]+)\)', expand=True)
-    
+
+    # Extrai prazo, valor e parcela
+    extracoes = base['Melhor_Item'].str.extract(
+        r'(?P<prazo>\d+)x: (?P<valor>[\d.,]+) \(parcela: (?P<parcela>[\d.,]+)\)',
+        expand=True
+    )
+
     if extracoes.empty:
         st.warning("Não foi possível extrair dados do formato esperado na coluna 'Melhor_Item'.")
         return pd.DataFrame()
 
     base['prazo_beneficio'] = pd.to_numeric(extracoes['prazo'], errors='coerce')
-    
+
+    # Corrige parsing de números em valor e parcela
     for col_name in ['valor', 'parcela']:
         col_series = extracoes[col_name].copy().astype(str)
-        # Lógica corrigida para tratar tanto '.' como separador de milhar quanto ',' como decimal
-        col_series = col_series.str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-        extracoes[col_name] = pd.to_numeric(col_series, errors='coerce')
+        extracoes[col_name] = col_series.apply(normalizar_numero)
 
     base['valor_liberado_beneficio'] = extracoes['valor']
     base['valor_parcela_beneficio'] = extracoes['parcela']
-    
+
+    # Tratamento de CPF e nome
     if 'CPF' in base.columns:
         base.loc[:, 'CPF'] = base['CPF'].str.replace(r'\D', '', regex=True)
     if 'Nome_Cliente' in base.columns:
@@ -397,20 +417,30 @@ def aplicar_filtro_simulacoes(df: pd.DataFrame, params: dict) -> pd.DataFrame:
             lambda x: x.title() if isinstance(x, str) else x
         )
 
+    # Remove valores inválidos
     base = base.loc[base['valor_liberado_beneficio'].fillna(0) > 0]
     if 'MG_Beneficio_Saque_Disponivel' in base.columns:
-         base = base.loc[pd.to_numeric(base['MG_Beneficio_Saque_Disponivel'].fillna(0), errors='coerce') >= 0]
+        base = base.loc[
+            pd.to_numeric(base['MG_Beneficio_Saque_Disponivel'].fillna(0), errors='coerce') >= 0
+        ]
 
+    # Filtro opcional de saldo devedor
     if params.get('filtrar_saldo_devedor', False) and "Saldo_Devedor" in base.columns:
         base.loc[:, "Saldo_Devedor"] = pd.to_numeric(base["Saldo_Devedor"], errors="coerce").fillna(0)
         base = base.loc[base["Saldo_Devedor"] > 0]
 
-    base.loc[:, 'comissao_beneficio'] = (base['valor_liberado_beneficio'].fillna(0) * params.get('comissao_banco', 0)).round(2)
-    base = base.query('comissao_beneficio >= @params["comissao_minima"]')
-    
-    base.loc[:, 'banco_beneficio'] = '243'
-    
-    params['tipo_campanha'] = 'Benefício' 
+    # Calcula comissão
+    base.loc[:, 'comissao_beneficio'] = (
+        base['valor_liberado_beneficio'].fillna(0) * params.get('comissao_banco', 0)
+    ).round(2)
 
+    # Filtra por comissão mínima
+    base = base.query('comissao_beneficio >= @params["comissao_minima"]')
+
+    # Adiciona informações fixas
+    base.loc[:, 'banco_beneficio'] = '243'
+    params['tipo_campanha'] = 'Benefício'
+
+    # Finaliza base
     base_final = _finalizar_base(base, params)
     return base_final
