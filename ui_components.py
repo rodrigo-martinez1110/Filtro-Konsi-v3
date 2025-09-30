@@ -78,7 +78,7 @@ def exibir_sidebar(df: pd.DataFrame, restricoes_db: dict):
         "data_limite_idade": data_limite_idade,
         "selecao_lotacao": selecao_lotacao,
         "selecao_vinculos": selecao_vinculos,
-        "equipes": equipes,
+        "equipe": equipes,
         "convai_percent": convai_percent,
         "convenio": convenio
     }
@@ -134,7 +134,7 @@ def exibir_configuracoes_banco(tipo_campanha: str, convenio: str, df: pd.DataFra
             
             config["coeficiente2"] = None
             if convenio == 'goval' and (tipo_campanha in ['Benefício', 'Benefício & Cartão']):
-                 config["coeficiente2"] = st.number_input(f"Coeficiente 2 (GOVAL):", min_value=0.0, step=0.0001, format="%.4f", key=f'coef2_{i}')
+                 config["coeficiente2"] = st.number_input(f"Coeficiente 2 (Saque complementar):", min_value=0.0, step=0.0001, format="%.4f", key=f'coef2_{i}')
 
             config["comissao"] = st.number_input(f"Comissão (%):", min_value=0.0, max_value=100.0, step=0.01, key=f"comissao_{i}")
             config["parcelas"] = st.number_input(f"Parcelas:", min_value=1, max_value=200, step=1, key=f"parcelas_{i}")

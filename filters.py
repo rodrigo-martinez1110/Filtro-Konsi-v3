@@ -293,10 +293,10 @@ def _finalizar_base(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     base.rename(columns=MAPEAMENTO_COLUNAS_FINAL, inplace=True)
     
     data_hoje = datetime.today().strftime('%d%m%Y')
-    campanha_map = {'Novo': 'novo', 'Benefício': 'benef', 'Cartão': 'cartao', 'Benefício & Cartão': 'benef-cartao'}
+    campanha_map = {'Novo': 'novo', 'Benefício': 'benef', 'Cartão': 'cartao', 'Benefício & Cartão': 'benef&cartao'}
     tipo_campanha_str = campanha_map.get(params['tipo_campanha'], 'campanha')
-    convenio = params.get('Convenio', 'geral')
-    equipe = params.get('equipes', 'geral')
+    convenio = params.get('convenio', 'geral')
+    equipe = params.get('equipe', 'geral')
     
     base['Campanha'] = f"{convenio}_{data_hoje}_{tipo_campanha_str}_{equipe}"
     
