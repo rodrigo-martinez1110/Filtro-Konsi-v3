@@ -296,7 +296,7 @@ def _finalizar_base(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     campanha_map = {'Novo': 'novo', 'Benefício': 'benef', 'Cartão': 'cartao', 'Benefício & Cartão': 'benef&cartao'}
     tipo_campanha_str = campanha_map.get(params['tipo_campanha'], 'campanha')
     convenio = params.get('convenio', 'geral')
-    equipe = params.get('equipe', 'geral')
+    equipe = params.get('equipe', 'outbound')
     
     base['Campanha'] = f"{convenio}_{data_hoje}_{tipo_campanha_str}_{equipe}"
     
@@ -440,6 +440,10 @@ def aplicar_filtro_simulacoes(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     # Adiciona informações fixas
     base.loc[:, 'banco_beneficio'] = '243'
     params['tipo_campanha'] = 'Benefício'
+    
+    # Adicione esta linha para extrair o convênio do arquivo e passar adiante
+    if 'Convenio' in base.columns and not base['Convenio'].empty:
+        params['convenio'] = base['Convenio'].iloc[0]
 
     # Finaliza base
     base_final = _finalizar_base(base, params)
