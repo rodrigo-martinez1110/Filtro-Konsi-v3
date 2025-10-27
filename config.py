@@ -18,7 +18,8 @@ BANCOS_MAPEAMENTO = {
     "623 - Banco PAN": "623",
     "643 - Banco Pine": "643",
     "654 - Banco DigiMais": "654",
-    "707- Banco Daycoval": "707",
+    "707 - Banco Daycoval": "707",
+    "708 - Banco Hope": "708",
     "955 - Banco Olé": "955",
     "6613 - VemCard": "6613"
 }
