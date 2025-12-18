@@ -8,6 +8,7 @@ BANCOS_MAPEAMENTO = {
     "2 - MeuCashCard": "2",
     "33 - Santander": "33",
     "74 - Banco do Brasil": "74",
+    "105 - Lecca": "105",
     "243 - Banco Master": "243",
     "318 - BMG": "318",
     "335 - Banco Digio": "335",
