@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import pandas as pd
 
@@ -48,19 +47,18 @@ if 'df_bruto' in st.session_state and not st.session_state.df_bruto.empty:
     supabase = init_supabase_client()
     
     # --- Lógica de Renderização Otimizada ---
-    # Primeiro, determinamos qual campanha está selecionada na interface.
-    # Usamos o 'st.session_state' para pegar o valor do selectbox, se já existir.
     tipo_campanha_selecionada = st.session_state.get('tipo_campanha_selectbox', 'Novo') 
     convenio_detectado = df_bruto['Convenio'].iloc[0] if 'Convenio' in df_bruto.columns else None
 
-    # Com base na seleção, buscamos as restrições corretas no Supabase.
     if supabase and convenio_detectado:
-        restricoes_db = buscar_restricoes(supabase, convenio_detectado, tipo_campanha_selecionada)
+        restricoes_db = buscar_restricoes(
+            supabase, 
+            convenio_detectado, 
+            tipo_campanha_selecionada
+        )
     else:
         restricoes_db = {}
     
-    # AGORA, chamamos a função da sidebar UMA ÚNICA VEZ, passando os dados
-    # do DataFrame e as restrições já carregadas do banco de dados.
     params_gerais = exibir_sidebar(df_bruto, restricoes_db)
     
     # --- Configuração dos Bancos (Área Principal) ---
@@ -75,42 +73,108 @@ if 'df_bruto' in st.session_state and not st.session_state.df_bruto.empty:
     if st.button("✨ Aplicar Filtros e Gerar Arquivo", type="primary", use_container_width=True):
         with st.spinner("Processando e aplicando filtros... Este processo pode levar alguns segundos."):
             try:
-                base_filtrada = aplicar_filtros(df_bruto, params_gerais, configs_banco)
+                base_filtrada = aplicar_filtros(
+                    df_bruto, 
+                    params_gerais, 
+                    configs_banco
+                )
 
                 if not base_filtrada.empty:
-                    # --- INÍCIO DOS LOGS DE VALIDAÇÃO ---
+                    # --- LOGS DE VALIDAÇÃO ---
                     with st.expander("🔬 Parâmetros de Validação Utilizados no Filtro"):
                         st.subheader("Parâmetros Gerais")
                         st.json(params_gerais)
 
                         st.subheader("Restrições Carregadas do Supabase")
-                        if restricoes_db:
-                            st.json(restricoes_db)
-                        else:
-                            st.info("Nenhuma restrição encontrada ou carregada do Supabase.")
-                        
+                        st.json(restricoes_db or {})
+
                         st.subheader("Configurações de Banco e Produto")
                         st.json(configs_banco)
-                    # --- FIM DOS LOGS DE VALIDAÇÃO ---
+
                     st.success("Filtros aplicados com sucesso!")
-                    st.metric("Registros na campanha final:", f"{len(base_filtrada)} clientes")
+                    st.metric(
+                        "Registros na campanha final:", 
+                        f"{len(base_filtrada)} clientes"
+                    )
                     st.dataframe(base_filtrada.head())
 
-                    csv_pronto = converter_df_para_csv(base_filtrada)
-                    nome_arquivo = f"{params_gerais['convenio']}_{params_gerais['tipo_campanha']}_{pd.Timestamp.now().strftime('%Y%m%d')}.csv"
-                    
-                    st.download_button(
-                        label="📥 Baixar CSV da Campanha",
-                        data=csv_pronto,
-                        file_name=nome_arquivo,
-                        mime='text/csv',
-                        use_container_width=True
-                    )
+                    # =====================================================
+                    # DOWNLOADS
+                    # =====================================================
+                    eh_campanha_novo = params_gerais['tipo_campanha'] == 'Novo'
+                    data_hoje = pd.Timestamp.now().strftime('%Y%m%d')
+
+                    st.subheader("📥 Downloads da Campanha")
+
+                    # Arquivo completo (sempre disponível)
+                    csv_completo = converter_df_para_csv(base_filtrada)
+
+                    if eh_campanha_novo:
+                        # NÃO TOMADORES
+                        df_nao_tomadores = base_filtrada[
+                            base_filtrada['margem_emprestimo_total'] ==
+                            base_filtrada['margem_emprestimo_disponivel']
+                        ]
+
+                        # TOMADORES
+                        df_tomadores = base_filtrada[
+                            base_filtrada['margem_emprestimo_total'] !=
+                            base_filtrada['margem_emprestimo_disponivel']
+                        ]
+
+                        csv_nao_tomadores = converter_df_para_csv(df_nao_tomadores)
+                        csv_tomadores = converter_df_para_csv(df_tomadores)
+
+                        col1, col2, col3 = st.columns(3)
+
+                        with col1:
+                            st.download_button(
+                                "📄 Arquivo Completo",
+                                csv_completo,
+                                f"{params_gerais['convenio']}_novo_completo_{data_hoje}.csv",
+                                "text/csv",
+                                use_container_width=True
+                            )
+
+                        with col2:
+                            st.download_button(
+                                "🟢 Apenas Não Tomadores",
+                                csv_nao_tomadores,
+                                f"{params_gerais['convenio']}_nao_tomadores_{data_hoje}.csv",
+                                "text/csv",
+                                use_container_width=True
+                            )
+
+                        with col3:
+                            st.download_button(
+                                "🔵 Apenas Tomadores",
+                                csv_tomadores,
+                                f"{params_gerais['convenio']}_tomadores_{data_hoje}.csv",
+                                "text/csv",
+                                use_container_width=True
+                            )
+
+                    else:
+                        st.download_button(
+                            "📄 Baixar CSV da Campanha",
+                            csv_completo,
+                            f"{params_gerais['convenio']}_{params_gerais['tipo_campanha']}_{data_hoje}.csv",
+                            "text/csv",
+                            use_container_width=True
+                        )
+
                 else:
-                    st.warning("Nenhum registro correspondeu aos filtros aplicados. Tente ajustar os parâmetros.")
+                    st.warning(
+                        "Nenhum registro correspondeu aos filtros aplicados. "
+                        "Tente ajustar os parâmetros."
+                    )
 
             except Exception as e:
-                st.error(f"Ocorreu um erro inesperado durante a filtragem:")
+                st.error("Ocorreu um erro inesperado durante a filtragem:")
                 st.exception(e)
+
 else:
-    st.info("Aguardando o carregamento dos arquivos CSV para iniciar a configuração da campanha.")
+    st.info(
+        "Aguardando o carregamento dos arquivos CSV "
+        "para iniciar a configuração da campanha."
+    )
