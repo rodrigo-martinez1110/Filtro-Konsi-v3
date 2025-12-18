@@ -112,14 +112,14 @@ if 'df_bruto' in st.session_state and not st.session_state.df_bruto.empty:
                     if eh_campanha_novo:
                         # NÃO TOMADORES
                         df_nao_tomadores = base_filtrada[
-                            base_filtrada['margem_emprestimo_total'] ==
-                            base_filtrada['margem_emprestimo_disponivel']
+                            base_filtrada['MG_Emprestimo_Total'] ==
+                            base_filtrada['MG_Emprestimo_Disponivel']
                         ]
 
                         # TOMADORES
                         df_tomadores = base_filtrada[
-                            base_filtrada['margem_emprestimo_total'] !=
-                            base_filtrada['margem_emprestimo_disponivel']
+                            base_filtrada['MG_Emprestimo_Total'] !=
+                            base_filtrada['MG_Emprestimo_Disponivel']
                         ]
 
                         csv_nao_tomadores = converter_df_para_csv(df_nao_tomadores)
