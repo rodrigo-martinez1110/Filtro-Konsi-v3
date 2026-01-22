@@ -1,5 +1,5 @@
 # requirements.txt
 pandas
-streamlit
+streamlit>=1.31
 supabase
 altair<5
