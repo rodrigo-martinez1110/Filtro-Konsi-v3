@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
+import sys
 
+st.write(sys.version)
 # Importando as funções dos nossos módulos refatorados
 from data_handler import (
     carregar_arquivos_csv, 
